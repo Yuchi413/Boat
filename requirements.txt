@@ -2,3 +2,8 @@ APScheduler==3.11.0
 cloudscraper==1.2.71
 Flask==3.1.0
 Flask-SQLAlchemy==3.1.1
+Flask-Cors==4.0.0
+python-dateutil==2.9.0.post0
+python-dotenv==1.0.1
+Shapely==2.0.4
+line-bot-sdk==3.11.0

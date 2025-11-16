@@ -39,9 +39,11 @@
         <button onclick="loadShipsData()">查詢</button>
     </div>
     <div id="cesiumContainer"></div>
-    <script>
+    <script type="module">
+        import { getTilesInRange } from '/static/tile-utils.js';
         Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJiYWU1ZDY3ZC1mYzM1LTQwMTUtYWEwMy1hZjBlZjdlNmRmZTUiLCJpZCI6MjQ5ODg1LCJpYXQiOjE3Mjk1ODExNjJ9.PMxlzgfO9AnBGlodb-qOO8DFhUMOFc3QMbfFqVKk7xY';
-
+        const tiles = getTilesInRange(25.1, 25.3, 121.5, 121.8);
+        console.log(tiles);
         // 初始化 Cesium Viewer
         const viewer = new Cesium.Viewer('cesiumContainer', {
             // terrain: Cesium.Terrain.fromWorldTerrain(),

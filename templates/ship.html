@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="zh-tw">
+
+<head>
+  <meta charset="UTF-8">
+  <title>船舶位置地圖</title>
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.126/Build/Cesium/Cesium.js"></script>
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.126/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+  <style>
+    html,
+    body,
+    #cesiumContainer {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+
+    #loadingIndicator {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 1001;
+      background: rgba(255, 255, 255, 0.8);
+      padding: 20px;
+      border-radius: 10px;
+      display: none;
+    }
+
+    #errorMessage {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      z-index: 1001;
+      background: rgba(255, 0, 0, 0.8);
+      color: white;
+      padding: 10px;
+      border-radius: 5px;
+      display: none;
+    }
+  </style>
+</head>
+
+<body>
+  <!-- 查詢面板 -->
+  <div id="queryInfo"
+    style="position:absolute;top:20px;left:20px;z-index:1000;background:white;padding:10px;border-radius:5px;opacity:0.8;">
+    <style>
+      .degInput {
+        width: 130px;
+      }
+    </style>
+    <h3>船舶查詢</h3>
+    <label>船名: <input type="text" id="shipname" style="width: 162px;"></label><br>
+    <label>最小緯度: <input class="degInput" type="number" id="minLat" step="0.1" value="23"></label><br>
+    <label>最大緯度: <input class="degInput" type="number" id="maxLat" step="0.1" value="30"></label><br>
+    <label>最小經度: <input class="degInput" type="number" id="minLon" step="0.1" value="110"></label><br>
+    <label>最大經度: <input class="degInput" type="number" id="maxLon" step="0.1" value="125"></label><br>
+    <label>開始時間: <br><input type="datetime-local" id="start" style="width: 205px;"></label><br>
+    <label>結束時間: <br><input type="datetime-local" id="end" style="width: 205px;"></label><br>
+    <button onclick="loadShipsData()">查詢</button>
+  </div>
+
+  <!-- Cesium 容器 -->
+  <div id="cesiumContainer"></div>
+
+  <!-- 顯示 UTC 時間 -->
+  <div id="utcTimeDisplay"
+    style="position:absolute;top:20px;right:20px;z-index:1000;background:rgba(0,0,0,0.5);color:white;
+            padding:8px 12px;border-radius:5px;font-family:sans-serif;font-size:14px;">
+    UTC: --:--:--
+  </div>
+
+  <!-- 圖例 -->
+  <div style="position:absolute;bottom:20px;left:20px;z-index:1000;background:rgba(0,0,0,0.6);color:white;padding:10px;border-radius:6px;">
+    <b>圖例 Legend</b><br>
+    🔴 12nm 內海警船<br>
+    🟡 12–24nm 海警船
+  </div>
+
+  <div id="loadingIndicator">載入中...</div>
+  <div id="errorMessage"></div>
+
+  <script>
+    Cesium.Ion.defaultAccessToken =
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJiYWU1ZDY3ZC1mYzM1LTQwMTUtYWEwMy1hZjBlZjdlNmRmZTUiLCJpZCI6MjQ5ODg1LCJpYXQiOjE3Mjk1ODExNjJ9.PMxlzgfO9AnBGlodb-qOO8DFhUMOFc3QMbfFqVKk7xY";
+
+    const viewer = new Cesium.Viewer("cesiumContainer", {
+      animation: false,
+      timeline: false,
+      baseLayerPicker: false,
+      geocoder: false,
+      homeButton: false,
+      sceneModePicker: false,
+      navigationHelpButton: false,
+      fullscreenButton: false,
+      selectionIndicator: false,
+      shouldAnimate: true,
+    });
+
+    viewer.scene.globe.enableLighting = false;
+
+    // 初始視角
+    viewer.camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(121, 23.5, 2000000),
+      orientation: {
+        heading: Cesium.Math.toRadians(0.0),
+        pitch: Cesium.Math.toRadians(-90.0),
+        roll: 0.0,
+      },
+    });
+
+    // === 顯示 12nm + 24nm 範圍線 ===
+    async function loadBoundaryLines() {
+      viewer.dataSources.removeAll();
+
+      try {
+        const res12 = await fetch("/static/taiwan_12nm.geojson");
+        const geojson12 = await res12.json();
+        const ds12 = await Cesium.GeoJsonDataSource.load(geojson12, {
+          stroke: Cesium.Color.WHITE,
+          fill: Cesium.Color.WHITE.withAlpha(0),
+          strokeWidth: 2,
+        });
+        viewer.dataSources.add(ds12);
+      } catch (err) { console.error("載入12nm失敗", err); }
+
+      try {
+        const res24 = await fetch("/static/taiwan_24nm.geojson");
+        const geojson24 = await res24.json();
+        const ds24 = await Cesium.GeoJsonDataSource.load(geojson24, {
+          stroke: Cesium.Color.WHITE.withAlpha(0.5),
+          fill: Cesium.Color.WHITE.withAlpha(0),
+          strokeWidth: 2,
+        });
+        viewer.dataSources.add(ds24);
+      } catch (err) { console.error("載入24nm失敗", err); }
+    }
+
+    // === 載入 CCG_check12 (紅色閃爍) ===
+    async function loadCCGCheck12() {
+      try {
+        viewer.entities.values
+          .filter(e => e.name && e.name.startsWith("ccgcheck12_"))
+          .forEach(e => viewer.entities.remove(e));
+
+        const res = await fetch("http://127.0.0.1:5000/api/ccg_check12_data");
+        const data = await res.json();
+
+        data.boats.forEach((boat, i) => {
+          if (!boat.lat || !boat.lon) return;
+          let alpha = 1, dir = -1;
+          const flashColor = new Cesium.CallbackProperty(() => {
+            alpha += dir * 0.05;
+            if (alpha >= 1) dir = -1;
+            if (alpha <= 0.2) dir = 1;
+            return Cesium.Color.RED.withAlpha(alpha);
+          }, false);
+
+          viewer.entities.add({
+            name: `ccgcheck12_${i}`,
+            position: Cesium.Cartesian3.fromDegrees(boat.lon, boat.lat),
+            point: {
+              pixelSize: 12,
+              color: flashColor,
+              outlineColor: Cesium.Color.BLACK,
+              outlineWidth: 2
+            },
+            label: {
+              text: boat.shipname || "Unknown",
+              font: "14px sans-serif",
+              fillColor: Cesium.Color.WHITE,
+              showBackground: true,
+              backgroundColor: Cesium.Color.BLACK.withAlpha(0.5),
+              pixelOffset: new Cesium.Cartesian2(0, -20)
+            }
+          });
+        });
+      } catch (err) {
+        console.error("載入CCG_check12失敗:", err);
+      }
+    }
+
+    // === 載入 CCG_check24 (黃色閃爍) ===
+    async function loadCCGCheck24() {
+      try {
+        viewer.entities.values
+          .filter(e => e.name && e.name.startsWith("ccgcheck24_"))
+          .forEach(e => viewer.entities.remove(e));
+
+        const res = await fetch("http://127.0.0.1:5000/api/ccg_check24_data");
+        const data = await res.json();
+
+        data.boats.forEach((boat, i) => {
+          if (!boat.lat || !boat.lon) return;
+          let alpha = 1, dir = -1;
+          const flashColor = new Cesium.CallbackProperty(() => {
+            alpha += dir * 0.05;
+            if (alpha >= 1) dir = -1;
+            if (alpha <= 0.2) dir = 1;
+            return Cesium.Color.YELLOW.withAlpha(alpha);
+          }, false);
+
+          viewer.entities.add({
+            name: `ccgcheck24_${i}`,
+            position: Cesium.Cartesian3.fromDegrees(boat.lon, boat.lat),
+            point: {
+              pixelSize: 12,
+              color: flashColor,
+              outlineColor: Cesium.Color.BLACK,
+              outlineWidth: 2
+            },
+            label: {
+              text: boat.shipname || "Unknown",
+              font: "14px sans-serif",
+              fillColor: Cesium.Color.WHITE,
+              showBackground: true,
+              backgroundColor: Cesium.Color.BLACK.withAlpha(0.5),
+              pixelOffset: new Cesium.Cartesian2(0, -20)
+            }
+          });
+        });
+      } catch (err) {
+        console.error("載入CCG_check24失敗:", err);
+      }
+    }
+
+    // === 初始化 ===
+    loadBoundaryLines();
+    loadCCGCheck12();
+    loadCCGCheck24();
+
+    // 每分鐘更新
+    setInterval(() => {
+      loadCCGCheck12();
+      loadCCGCheck24();
+    }, 60000);
+
+    // 顯示 UTC 時間
+    function updateUTCTime() {
+      const now = new Date();
+      const utcString = now.toISOString().substring(0, 19).replace("T", " ");
+      document.getElementById("utcTimeDisplay").textContent = "UTC: " + utcString;
+    }
+    updateUTCTime();
+    setInterval(updateUTCTime, 1000);
+  </script>
+</body>
+
+</html>

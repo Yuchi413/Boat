@@ -1,0 +1,60 @@
+app/
+  ├── app.py                # 主入口，負責啟動 Flask & Scheduler
+  ├── config.py             # 環境變數、DB 路徑、LINE 設定
+  ├── models.py             # SQLAlchemy 模型與建表
+  ├── database.py           # DB engine/session 建立與共用函式
+  ├── fetcher.py            # fetch_data 與爬蟲相關邏輯
+  ├── line_push.py          # LINE 推播與訊息去重
+  ├── utils.py              # 工具函式 (safe_float, haversine, log_failed_record)
+  ├── routes/
+  │    ├── __init__.py      # Blueprint 註冊
+  │    ├── api.py           # API endpoints
+  │    └── web.py           # 前端頁面（地圖顯示）
+  └── scheduler.py          # APScheduler 定時任務
+
+
+ngrok http 5000
+
+
+
+
+# =========================================
+# 手動測試：台中港的海警船（應進入 12nm）
+# =========================================
+
+test_ship = {
+    "ship_id": "TEST_TAICHUNG",
+    "shipname": "CHINACOASTGUARD_TEST12",
+    "lat": 24.266,   # 台中港
+    "lon": 120.516,
+    "timestamp": datetime.utcnow(),
+    "speed": 0.0,
+    "course": 0.0,
+    "heading": 0.0,
+    "flag": "CN",
+    "shiptype": "TEST",
+    "gt_shiptype": "TEST",
+}
+
+p = Point(test_ship["lon"], test_ship["lat"])
+in_12nm = p.within(TAIWAN_12NM_POLYGON)
+in_24nm = p.within(TAIWAN_24NM_POLYGON)
+
+if in_12nm:
+    print("✅ 測試船進入 12nm")
+    BoatCheck12Session.add(BoatCheck12AIS(**test_ship))
+    CCGCheck12Session.add(CCGCheck12ShipAIS(**test_ship))
+elif in_24nm and not in_12nm:
+    print("⚠️ 測試船在 12–24nm 之間")
+else:
+    print("🌊 測試船在 24nm 外")
+
+BoatSession.add(BoatShipAIS(**test_ship))
+CCGSession.add(CCGShipAIS(**test_ship))
+
+# 寫入資料庫
+BoatSession.commit()
+CCGSession.commit()
+BoatCheck12Session.commit()
+CCGCheck12Session.commit()
+print("💾 已寫入測試資料")
